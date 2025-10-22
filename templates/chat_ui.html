@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chat Dental & Citas</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    #chat { border: 1px solid #ccc; padding: 10px; width: 400px; height: 300px; overflow-y: auto; }
+    #input { width: 300px; }
+    #btn { padding: 5px 10px; }
+  </style>
+</head>
+<body>
+  <h2>Chatbot Dental + Reserva de Citas</h2>
+  <div id="chat"></div>
+  <textarea id="input" rows="2" placeholder="Haz una pregunta o pide cita (#cita)"></textarea><br>
+  <button id="btn">Enviar</button>
+
+  <script>
+    const chatDiv = document.getElementById("chat");
+    const inputEl = document.getElementById("input");
+    const btn = document.getElementById("btn");
+
+    btn.onclick = async () => {
+      const msg = inputEl.value.trim();
+      if (!msg) return;
+      chatDiv.innerHTML += `<div><strong>Tú:</strong> ${msg}</div>`;
+      inputEl.value = "";
+
+      if (msg.toLowerCase().startsWith("#cita")) {
+        // Comando especial para reservar cita: ejemplo: "#cita|Juan|987654321|limpieza|2025-10-15|14:30:00"
+        const parts = msg.split("|");
+        if (parts.length !== 6) {
+          chatDiv.innerHTML += `<div style="color:red;">Para pedir cita escribe: #cita|TuNombre|TuTel|Servicio|YYYY-MM-DD|HH:MM:SS</div>`;
+          return;
+        }
+        const [_, name, phone, service, date, time] = parts;
+        const resp = await fetch("/appointments", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({name, phone, service, date, time})
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          chatDiv.innerHTML += `<div><strong>Bot:</strong> ${data.message}</div>`;
+        } else {
+          chatDiv.innerHTML += `<div style="color:red;"><strong>Error:</strong> ${data.error || data.message}</div>`;
+        }
+      } else {
+        // Si no es cita, va al chat del bot
+        const resp = await fetch("/chat-stream", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({message: msg})
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          chatDiv.innerHTML += `<div style="color:red;"><strong>Error:</strong> ${err.error || "Desconocido"}</div>`;
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let acc = "";
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, {stream:true});
+          acc += chunk;
+          chatDiv.innerHTML = chatDiv.innerHTML.replace(/<div id="bot">[\s\S]*?<\/div>/, "");
+          chatDiv.innerHTML += `<div id="bot"><strong>Bot:</strong> ${acc}</div>`;
+          chatDiv.scrollTop = chatDiv.scrollHeight;
+        }
+        // respuesta final
+        chatDiv.innerHTML = chatDiv.innerHTML.replace(/<div id="bot">[\s\S]*?<\/div>/, `<div><strong>Bot:</strong> ${acc}</div>`);
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+      }
+    };
+  </script>
+</body>
+</html>
