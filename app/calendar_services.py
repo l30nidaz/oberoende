@@ -49,7 +49,7 @@ def crear_cita(nombre_paciente, doctor, fecha, hora_inicio, duracion_min=30, cor
         'description': f'Paciente: {nombre_paciente}\nMotivo: {motivo or "Consulta general"}',
         'start': {'dateTime': inicio.isoformat(), 'timeZone': TIMEZONE},
         'end': {'dateTime': fin.isoformat(), 'timeZone': TIMEZONE},
-        'attendees': [{'email': correo_paciente}] if correo_paciente else [],
+        #'attendees': [{'email': correo_paciente}] if correo_paciente else [], #elimino esta línea porque mi service_account no puede enviar correo a los invitados, enviará desde whatsapp
         'reminders': {
             'useDefault': False,
             'overrides': [
