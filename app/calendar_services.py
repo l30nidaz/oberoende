@@ -1,74 +1,102 @@
-# calendar_service.py
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+# calendar_services.py
+import requests
 from datetime import datetime, timedelta
-import pytz
+import os
+from dotenv import load_dotenv
 
-# ===== CONFIGURACIÓN =====
-SERVICE_ACCOUNT_FILE = 'credentials.json'  # tu archivo de cuenta de servicio
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+load_dotenv()
 
-# ID del calendario donde se crearán las citas
-# Puedes obtenerlo desde "Configuración y uso compartido" en Google Calendar
-CALENDAR_ID = 'jwlioabel@gmail.com'
+CALENDLY_TOKEN = os.getenv('CALENDLY_TOKEN')
+CALENDLY_EVENT_TYPE_URI = os.getenv('CALENDLY_EVENT_TYPE_URI')  # e.g., https://api.calendly.com/event_types/EVT_ID
+CALENDLY_BASE_URL = 'https://api.calendly.com'
+HEADERS = {
+    'Authorization': f'Bearer {CALENDLY_TOKEN}',
+    'Content-Type': 'application/json'
+}
 
-# Zona horaria local (ajústala si no estás en Lima)
-TIMEZONE = 'America/Lima'
-
-
-# ===== FUNCIÓN PRINCIPAL =====
-def crear_cita(nombre_paciente, doctor, fecha, hora_inicio, duracion_min=30, correo_paciente=None, motivo=None):
+def generar_link_calendly(nombre_paciente, email_paciente=None, doctor=None, motivo=None):
     """
-    Crea una cita médica en Google Calendar.
-
-    Parámetros:
-    - nombre_paciente: str
-    - doctor: str
-    - fecha: str en formato 'YYYY-MM-DD'
-    - hora_inicio: str en formato 'HH:MM'
-    - duracion_min: int (opcional, por defecto 30)
-    - correo_paciente: str (opcional)
-    - motivo: str (opcional)
+    Genera un link pre-filled para Calendly.
+    Retorna: dict con link y detalles.
     """
-
-    # Autenticación
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
-    )
-
-    service = build('calendar', 'v3', credentials=creds)
-
-    # Convertir fecha y hora al formato ISO con zona horaria
-    tz = pytz.timezone(TIMEZONE)
-    inicio = tz.localize(datetime.strptime(f"{fecha} {hora_inicio}", "%Y-%m-%d %H:%M"))
-    fin = inicio + timedelta(minutes=duracion_min)
-
-    # Crear cuerpo del evento
-    event = {
-        'summary': f'Cita médica - {doctor}',
-        'description': f'Paciente: {nombre_paciente}\nMotivo: {motivo or "Consulta general"}',
-        'start': {'dateTime': inicio.isoformat(), 'timeZone': TIMEZONE},
-        'end': {'dateTime': fin.isoformat(), 'timeZone': TIMEZONE},
-        #'attendees': [{'email': correo_paciente}] if correo_paciente else [], #elimino esta línea porque mi service_account no puede enviar correo a los invitados, enviará desde whatsapp
-        'reminders': {
-            'useDefault': False,
-            'overrides': [
-                {'method': 'email', 'minutes': 60},    # recordatorio 1 hora antes
-                {'method': 'popup', 'minutes': 10},    # recordatorio 10 min antes
-            ],
-        },
+    # Pre-fill params (Calendly soporta estos)
+    params = {
+        'invitee_name': nombre_paciente,
+        'invitee_email': email_paciente or f"{nombre_paciente.lower().replace(' ', '.')}@ejemplo.com",  # Fallback si no hay email
+        'custom_answers': [  # Custom fields si los tienes en event type
+            {'question': 'Doctor preferido', 'answer': doctor or 'Cualquiera'},
+            {'question': 'Motivo de consulta', 'answer': motivo or 'Consulta general'}
+        ]
     }
-
-    # Insertar evento en Google Calendar
-    event_result = service.events().insert(
-        calendarId=CALENDAR_ID, body=event
-    ).execute()
-
+    
+    # Construye el scheduling link (usa el event type URI para base)
+    event_type_id = CALENDLY_EVENT_TYPE_URI.split('/')[-1]
+    base_link = f"https://calendly.com/{event_type_id.replace('event_types/', '')}/schedule"
+    
+    # Append params (Calendly parsea query strings)
+    import urllib.parse
+    query_string = urllib.parse.urlencode({k: v for k, v in params.items() if isinstance(v, str)}, doseq=True)
+    full_link = f"{base_link}?{query_string}"
+    
     return {
         "status": "ok",
-        "evento": event_result.get('htmlLink'),
-        "inicio": inicio.strftime("%Y-%m-%d %H:%M"),
-        "fin": fin.strftime("%Y-%m-%d %H:%M"),
+        "link": full_link,
+        "mensaje_whatsapp": f"¡Hola {nombre_paciente}! Agenda tu cita aquí: {full_link}\n\nElige doctor: {doctor or 'Disponible'}\nMotivo: {motivo or 'Consulta general'}",
         "paciente": nombre_paciente,
         "doctor": doctor
     }
+
+def chequear_disponibilidad(doctor_uri=None, fecha_inicio=None, fecha_fin=None):
+    """
+    Chequea slots disponibles en event type (opcional, para pre-filtrar).
+    """
+    params = {}
+    if fecha_inicio:
+        params['start_time'] = fecha_inicio  # ISO format
+    if fecha_fin:
+        params['end_time'] = fecha_fin
+    if doctor_uri:  # Si es team event
+        params['preferred_organization_user'] = doctor_uri  # URI del doctor
+    
+    response = requests.get(
+        f"{CALENDLY_BASE_URL}/event_types/{CALENDLY_EVENT_TYPE_URI.split('/')[-1]}/availability",
+        headers=HEADERS,
+        params=params
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        slots = data.get('resource', {}).get('slots', [])  # Lista de slots disponibles
+        return {"disponibles": slots[:5]}  # Top 5 slots
+    else:
+        return {"error": response.text}
+
+def manejar_webhook_calendly(data):
+    """
+    Procesa webhook cuando se crea invitado (cita agendada).
+    Llama esto desde tu endpoint Flask.
+    Retorna: dict con detalles para DB o WhatsApp confirm.
+    """
+    if data.get('event') == 'invitee.created':
+        invitee = data['payload']['invitee']
+        event = data['payload']['event']  # Detalles del evento
+        
+        # Actualiza tu DB (usa tu modelo Appointment)
+        # Ejemplo: from app.appointments import Appointment; Appointment.create_from_calendly(invitee)
+        
+        # Envía confirmación por WhatsApp (integra con tu send_whatsapp_message)
+        confirm_msg = f"✅ Cita confirmada para {invitee['name']} el {event['start_time']} con {event.get('organization_user', {}).get('name', 'Doctor asignado')}."
+        
+        return {
+            "status": "ok",
+            "confirmacion": confirm_msg,
+            "detalles": {
+                "paciente": invitee['name'],
+                "fecha": event['start_time'],
+                "doctor": event.get('organization_user', {}).get('name')
+            }
+        }
+    return {"status": "ignored"}
+
+# Mantén tu función vieja como fallback si quieres
+# def crear_cita_google(...): ...  # Tu código original

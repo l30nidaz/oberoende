@@ -29,10 +29,12 @@ def create_app():
     #Registrar blueprints o rutas aquí
     from app.appointments import bp as appointments_bp
     from app.functions import bp as functions_bp
-    from app.whatsapp import bp as whatsapp_bp
+    from app._____whatsapp import bp as whatsapp_bp
     from app.my_collections import bp as my_collections_bp
     from app.users import bp as users_bp
-    
+    from app.calendly_webhook import bp as calendly_bp
+
+    app.register_blueprint(calendly_bp)
     app.register_blueprint(appointments_bp)
     app.register_blueprint(functions_bp)
     app.register_blueprint(whatsapp_bp)

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import os
 from app.my_collections import mi_coleccion 
 from app import csrf
-from app.calendar_services import generar_link_calendly
+from app.___calendar_services import crear_cita
 import json
 import re
 from datetime import datetime, timedelta
@@ -204,26 +204,42 @@ def gestionar_flujo_cita(usuario, mensaje, state):
     
     # Todos los campos completos - crear cita
     try:
-        resultado = generar_link_calendly(
+        resultado = crear_cita(
             nombre_paciente=state['nombre_paciente'],
-            email_paciente=usuario.email if hasattr(usuario, 'email') else None,
             doctor=state['doctor'],
+            fecha=state['fecha'],
+            hora_inicio=state['hora'],
+            duracion_min=30,
+            correo_paciente=usuario.email if hasattr(usuario, 'email') else None,
             motivo=state.get('motivo', 'Consulta general')
         )
-        respuesta = resultado['mensaje_whatsapp'] + "\n\nUna vez agendes, recibirás confirmación automática. ¿Algo más?"
+        
+        respuesta = f"""
+✅ ¡Cita agendada exitosamente!
+
+📋 Detalles:
+• Paciente: {resultado['paciente']}
+• Doctor: {resultado['doctor']}
+• Fecha: {resultado['inicio']}
+• Duración: 30 minutos
+
+Te enviaremos recordatorios antes de tu cita. ¿Hay algo más en lo que pueda ayudarte?
+"""
+        
         return {
             'completado': True,
-            'respuesta': respuesta,
+            'respuesta': respuesta.strip(),
             'state': {}  # Limpiar state
         }
     except Exception as e:
-        print(f"[ERROR] generar_link_calendly: {e}")
+        print(f"[ERROR] crear_cita: {e}")
         return {
             'completado': False,
-            'respuesta': f'Hubo un error al generar el link: {str(e)}. ¿Quieres intentarlo de nuevo?',
+            'respuesta': f'Hubo un error al crear la cita: {str(e)}. ¿Quieres intentarlo de nuevo?',
             'state': {}
         }
-    
+
+
 def recuperar_contexto(pregunta, top_k=3):
     results = mi_coleccion.query(
         query_texts=[pregunta],

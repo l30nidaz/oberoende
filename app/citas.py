@@ -1,4 +1,4 @@
-from app.whatsapp import enviar_whatsapp
+from app._____whatsapp import enviar_whatsapp
 from flask import jsonify, Blueprint
 import os
 from openai import OpenAI
